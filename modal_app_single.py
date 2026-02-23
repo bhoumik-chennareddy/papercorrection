@@ -2,7 +2,6 @@ import modal
 import os
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from sentence_transformers import SentenceTransformer, util
 import google.generativeai as genai
 from PIL import Image
 import io
@@ -22,93 +21,18 @@ fastapi_app.add_middleware(
 
 # Lazy globals
 model_gemini = None
-model_grading = None
 
 def _ensure_models():
-    global model_gemini, model_grading
-    if model_gemini is None or model_grading is None:
+    global model_gemini
+    if model_gemini is None:
         GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
         if not GEMINI_API_KEY:
             raise RuntimeError("GEMINI_API_KEY environment variable is not set.")
         genai.configure(api_key=GEMINI_API_KEY)
-        model_gemini = genai.GenerativeModel('gemini-2.0-flash-exp')
-        model_grading = SentenceTransformer('all-MiniLM-L6-v2')
-
-@fastapi_app.post("/grade")
-async def grade_paper(
-    file: UploadFile = File(...), 
-    reference_answer: str = Form(...),
-    max_marks: int = Form(5)
-):
-    _ensure_models()
-    try:
-        print("🔹 Step 1: Reading uploaded image...")
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        print("✅ Image read complete.")
-
-        print("🔹 Step 2: Starting OCR with Gemini...")
-        response = model_gemini.generate_content([
-            "Transcribe the handwritten text in this image exactly as it is written. Do not add any commentary.", 
-            image
-        ])
-        student_text = response.text.strip()
-        print(f"📄 Extracted: {student_text}")
-
-        if not student_text:
-            return {"status": "error", "message": "Could not read any text from the image."}
-
-        print("🔹 Step 3: Computing similarity with SentenceTransformer...")
-        embedding_student = model_grading.encode(student_text, convert_to_tensor=True)
-        embedding_reference = model_grading.encode(reference_answer, convert_to_tensor=True)
-        similarity_score = util.pytorch_cos_sim(embedding_student, embedding_reference).item()
-        print(f"📊 Similarity score: {similarity_score}")
-
-        marks = round(similarity_score * max_marks, 1)
-        if marks < 0: marks = 0
-        feedback = "Excellent!" if similarity_score > 0.8 else \
-                   "Good attempt." if similarity_score > 0.5 else \
-                   "Needs improvement."
-        print(f"✅ Grading complete. Marks: {marks}/{max_marks}")
-
-        return {
-            "status": "success",
-            "extracted_text": student_text,
-            "grade": {
-                "marks": marks,
-                "max_marks": max_marks,
-                "similarity": float(similarity_score)
-            },
-            "feedback": feedback
-        }
-    except Exception as e:
-        print(f"❌ Error in /grade: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+        model_gemini = genai.GenerativeModel('gemini-2.5-flash')
 
 @fastapi_app.post("/grade-batch")
 async def grade_batch(payload: Dict[str, Any] = Body(...)):
-    """
-    Grade multiple student submissions for a subject using answer keys.
-    
-    Expected payload:
-    {
-        "submissions": [
-            {
-                "id": "submission_id",
-                "studentName": "John Doe",
-                "fileData": "base64_string"
-            }
-        ],
-        "answerKeys": [
-            {
-                "questionNumber": "1",
-                "referenceAnswer": "The answer...",
-                "maxMarks": 10
-            }
-        ]
-    }
-    """
     _ensure_models()
     
     try:
@@ -135,53 +59,66 @@ async def grade_batch(payload: Dict[str, Any] = Body(...)):
                     file_data = file_data.split(",")[1]
                 
                 image_bytes = base64.b64decode(file_data)
+                images = []
                 
                 # Check if it's a PDF and convert to image
                 try:
                     # Try to open as image first
-                    image = Image.open(io.BytesIO(image_bytes))
+                    img = Image.open(io.BytesIO(image_bytes))
+                    images.append(img)
                     print("✅ Loaded as image")
                 except Exception as img_error:
                     # If that fails, try as PDF
                     print("📄 Detected PDF, converting to image...")
                     try:
-                        # Import here to avoid local dependency issues
                         from pdf2image import convert_from_bytes
-                        
-                        # Convert PDF first page to image
-                        images = convert_from_bytes(image_bytes, first_page=1, last_page=1)
-                        if images:
-                            image = images[0]
-                            print("✅ PDF converted to image")
+                        # Convert all pages (no first_page, last_page limit)
+                        pdf_images = convert_from_bytes(image_bytes)
+                        if pdf_images:
+                            images.extend(pdf_images)
+                            print(f"✅ PDF converted to {len(images)} images")
                         else:
                             raise Exception("PDF conversion returned no images")
                     except Exception as pdf_error:
                         print(f"❌ Failed to load file: {pdf_error}")
                         raise Exception(f"Could not process file as image or PDF: {img_error}, {pdf_error}")
                 
+                # Prepare answer keys context
+                answer_keys_json = json.dumps(answer_keys)
                 
-                # Step 1: Extract questions and answers using Gemini
-                print("🔹 Extracting questions from paper...")
-                extraction_prompt = f"""
-You are analyzing a student's answer sheet. Your job is to:
-1. Detect ALL question numbers in this paper (they might be formatted as: Q1, 1., Q2, 2., Question 1, etc.)
-2. For each question number, extract the student's complete answer
+                print("🔹 Prompting Gemini to grade the paper...")
+                grading_prompt = f"""
+You are an expert professor grading a student's answer sheet. 
+You are provided with images of the student's submission (which may be multiple pages).
 
-Return ONLY a JSON object in this exact format (no markdown, no code blocks):
+Here is the Answer Key in JSON format:
+{answer_keys_json}
+
+Your task:
+1. Identify the student's answers for each question listed in the answer key.
+2. Evaluate the student's answer against the referenceAnswer.
+3. Assign marks for each question up to the maxMarks. Be fair: if the student demonstrates understanding of the core concepts but uses different wording, award full or partial credit. If the answer is completely wrong or missing, give 0.
+4. Provide a very brief 1-2 sentence feedback explaining the marks given.
+5. Provide the exact text from the student's answer (or a summary if it's very long).
+
+Return ONLY a JSON object exactly like this, with NO markdown formatting around it (no ```json):
 {{
   "questions": [
-    {{"questionNumber": "1", "answer": "student's answer to question 1"}},
-    {{"questionNumber": "2", "answer": "student's answer to question 2"}}
+    {{
+      "questionNumber": "1",
+      "marksObtained": 8.5,
+      "maxMarks": 10,
+      "feedback": "Core concept is correct but missed explaining XYZ.",
+      "studentAnswer": "The extracted or summarized student answer..."
+    }}
   ]
 }}
-
-If you cannot find any questions, return: {{"questions": []}}
 """
                 
-                response = model_gemini.generate_content([extraction_prompt, image])
+                contents = [grading_prompt] + images
+                response = model_gemini.generate_content(contents)
                 extracted_text = response.text.strip()
                 
-                # Clean up response (remove markdown code blocks if present)
                 if extracted_text.startswith("```"):
                     extracted_text = extracted_text.split("```")[1]
                     if extracted_text.startswith("json"):
@@ -190,73 +127,51 @@ If you cannot find any questions, return: {{"questions": []}}
                 print(f"📄 Raw extraction: {extracted_text[:200]}...")
                 
                 try:
-                    extracted_data = json.loads(extracted_text)
-                    student_answers = extracted_data.get("questions", [])
+                    graded_data = json.loads(extracted_text)
+                    graded_questions = graded_data.get("questions", [])
                 except json.JSONDecodeError:
-                    print("⚠️ Failed to parse JSON, trying to extract manually...")
-                    student_answers = []
+                    raise Exception("Failed to parse Gemini JSON output")
                 
-                print(f"✅ Found {len(student_answers)} answers from student")
-                
-                # Step 2: Grade each question
                 question_results = []
                 total_marks = 0
                 total_max_marks = 0
                 
                 for answer_key in answer_keys:
                     key_q_num = str(answer_key.get("questionNumber", "")).strip()
-                    reference_answer = answer_key.get("referenceAnswer", "")
                     max_marks = answer_key.get("maxMarks", 5)
-                    
+                    reference_answer = answer_key.get("referenceAnswer", "")
                     total_max_marks += max_marks
                     
-                    # Find matching student answer
-                    student_answer = None
-                    for sa in student_answers:
-                        sa_q_num = str(sa.get("questionNumber", "")).strip()
-                        # Normalize question numbers (remove Q, dots, spaces)
-                        normalized_key = key_q_num.replace("Q", "").replace("q", "").replace(".", "").strip()
-                        normalized_student = sa_q_num.replace("Q", "").replace("q", "").replace(".", "").strip()
-                        
-                        if normalized_key == normalized_student:
-                            student_answer = sa.get("answer", "")
+                    # Find matched grade
+                    matched_q = None
+                    for gq in graded_questions:
+                        if str(gq.get("questionNumber", "")).strip() == key_q_num:
+                            matched_q = gq
                             break
                     
-                    if not student_answer:
-                        print(f"⚠️ Question {key_q_num} not found in student's paper")
-                        question_results.append({
-                            "questionNumber": key_q_num,
-                            "marksObtained": 0,
-                            "maxMarks": max_marks,
-                            "similarity": 0,
-                            "studentAnswer": "NOT FOUND",
-                            "referenceAnswer": reference_answer
-                        })
-                        continue
-                    
-                    # Calculate similarity
-                    print(f"🔹 Grading Q{key_q_num}...")
-                    embedding_student = model_grading.encode(student_answer, convert_to_tensor=True)
-                    embedding_reference = model_grading.encode(reference_answer, convert_to_tensor=True)
-                    similarity_score = util.pytorch_cos_sim(embedding_student, embedding_reference).item()
-                    
-                    marks_obtained = round(similarity_score * max_marks, 1)
-                    if marks_obtained < 0: marks_obtained = 0
-                    
+                    if matched_q:
+                        marks_obtained = float(matched_q.get("marksObtained", 0))
+                        marks_obtained = min(max(marks_obtained, 0), max_marks)  # clamp
+                        feedback = matched_q.get("feedback", "No feedback provided.")
+                        student_ans = matched_q.get("studentAnswer", "Could not extract.")
+                    else:
+                        print(f"⚠️ Question {key_q_num} not graded by Gemini")
+                        marks_obtained = 0
+                        feedback = "Question not found in student's paper."
+                        student_ans = "NOT FOUND"
+                        
                     total_marks += marks_obtained
-                    
                     question_results.append({
                         "questionNumber": key_q_num,
                         "marksObtained": marks_obtained,
                         "maxMarks": max_marks,
-                        "similarity": float(similarity_score),
-                        "studentAnswer": student_answer[:200],  # Truncate for response
-                        "referenceAnswer": reference_answer[:200]
+                        "feedback": feedback,
+                        "studentAnswer": student_ans,
+                        "referenceAnswer": reference_answer
                     })
                     
-                    print(f"✅ Q{key_q_num}: {marks_obtained}/{max_marks} (similarity: {similarity_score:.2f})")
+                    print(f"✅ Q{key_q_num}: {marks_obtained}/{max_marks}")
                 
-                # Calculate percentage and feedback
                 percentage = (total_marks / total_max_marks * 100) if total_max_marks > 0 else 0
                 
                 if percentage >= 80:
@@ -299,7 +214,6 @@ If you cannot find any questions, return: {{"questions": []}}
         print(f"❌ Error in /grade-batch: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # --- MODAL WRAPPER ---
 app = modal.App("paper-grader-backend")
 image = (
@@ -309,7 +223,6 @@ image = (
         "fastapi",
         "uvicorn[standard]",
         "pillow",
-        "sentence-transformers",
         "google-generativeai",
         "python-multipart",
         "pdf2image",
