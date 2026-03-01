@@ -100,6 +100,7 @@ Your task:
 3. Assign marks for each question up to the maxMarks. Be fair: if the student demonstrates understanding of the core concepts but uses different wording, award full or partial credit. If the answer is completely wrong or missing, give 0.
 4. Provide a very brief 1-2 sentence feedback explaining the marks given.
 5. Provide the exact text from the student's answer (or a summary if it's very long).
+6. Provide a rubric breakdown explaining exactly where points were awarded or lost. Split the grade into 2-4 logical criteria (e.g., 'Core Concept', 'Formula', 'Execution').
 
 Return ONLY a JSON object exactly like this, with NO markdown formatting around it (no ```json):
 {{
@@ -109,7 +110,11 @@ Return ONLY a JSON object exactly like this, with NO markdown formatting around 
       "marksObtained": 8.5,
       "maxMarks": 10,
       "feedback": "Core concept is correct but missed explaining XYZ.",
-      "studentAnswer": "The extracted or summarized student answer..."
+      "studentAnswer": "The extracted or summarized student answer...",
+      "rubricBreakdown": [
+        {{"criterion": "Core Concept", "marks": 4, "maxMarks": 5}},
+        {{"criterion": "Execution Details", "marks": 4.5, "maxMarks": 5}}
+      ]
     }}
   ]
 }}
@@ -154,11 +159,13 @@ Return ONLY a JSON object exactly like this, with NO markdown formatting around 
                         marks_obtained = min(max(marks_obtained, 0), max_marks)  # clamp
                         feedback = matched_q.get("feedback", "No feedback provided.")
                         student_ans = matched_q.get("studentAnswer", "Could not extract.")
+                        rubric_breakdown = matched_q.get("rubricBreakdown", [])
                     else:
                         print(f"⚠️ Question {key_q_num} not graded by Gemini")
                         marks_obtained = 0
                         feedback = "Question not found in student's paper."
                         student_ans = "NOT FOUND"
+                        rubric_breakdown = []
                         
                     total_marks += marks_obtained
                     question_results.append({
@@ -167,7 +174,8 @@ Return ONLY a JSON object exactly like this, with NO markdown formatting around 
                         "maxMarks": max_marks,
                         "feedback": feedback,
                         "studentAnswer": student_ans,
-                        "referenceAnswer": reference_answer
+                        "referenceAnswer": reference_answer,
+                        "rubricBreakdown": rubric_breakdown
                     })
                     
                     print(f"✅ Q{key_q_num}: {marks_obtained}/{max_marks}")

@@ -5,6 +5,13 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, XCircle, AlertCircle, FileText, Percent, Award, BookOpen, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
+
+interface RubricCriterion {
+    criterion: string;
+    marks: number;
+    maxMarks: number;
+}
 
 interface QuestionResult {
     questionNumber: string;
@@ -14,6 +21,7 @@ interface QuestionResult {
     studentAnswer: string;
     referenceAnswer: string;
     feedback?: string;
+    rubricBreakdown?: RubricCriterion[];
 }
 
 interface StudentSubmission {
@@ -152,6 +160,36 @@ export default function SubmissionDetail() {
                         </div>
                     </div>
                 )}
+
+                {/* Score Distribution Chart */}
+                {questionResults && questionResults.length > 0 && (
+                    <div className="mt-8 pt-8 border-t border-zinc-800/80">
+                        <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4 flex items-center gap-2">
+                            <Percent className="w-4 h-4 text-purple-400" />
+                            Performance Distribution by Question (%)
+                        </h3>
+                        <div className="h-64 w-full bg-zinc-950/50 rounded-xl p-4 border border-zinc-800">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <RadarChart cx="50%" cy="50%" outerRadius="80%" data={
+                                    questionResults.map(qr => ({
+                                        subject: `Q${qr.questionNumber}`,
+                                        score: qr.maxMarks > 0 ? Math.round((qr.marksObtained / qr.maxMarks) * 100) : 0,
+                                        fullMark: 100,
+                                    }))
+                                }>
+                                    <PolarGrid stroke="#3f3f46" />
+                                    <PolarAngleAxis dataKey="subject" tick={{ fill: '#a1a1aa', fontSize: 12, fontWeight: 'bold' }} />
+                                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} />
+                                    <Radar name="Score %" dataKey="score" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.4} />
+                                    <RechartsTooltip
+                                        contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', color: '#f4f4f5', borderRadius: '8px' }}
+                                        itemStyle={{ color: '#c084fc', fontWeight: 'bold' }}
+                                    />
+                                </RadarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                )}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -215,6 +253,28 @@ export default function SubmissionDetail() {
                                             </div>
                                         </div>
                                     </div>
+
+                                    {qr.rubricBreakdown && qr.rubricBreakdown.length > 0 && (
+                                        <div className="mt-4 pt-4 border-t border-zinc-800/80">
+                                            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider block mb-3">Rubric Breakdown</span>
+                                            <div className="space-y-3">
+                                                {qr.rubricBreakdown.map((item, i) => (
+                                                    <div key={i} className="flex flex-col gap-1">
+                                                        <div className="flex justify-between text-sm">
+                                                            <span className="text-zinc-300">{item.criterion}</span>
+                                                            <span className="text-zinc-400 font-medium">{item.marks} / {item.maxMarks}</span>
+                                                        </div>
+                                                        <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                                                            <div
+                                                                className={`h-full rounded-full transition-all duration-500 ${item.marks === item.maxMarks ? 'bg-emerald-500' : item.marks > 0 ? 'bg-amber-500' : 'bg-red-500'}`}
+                                                                style={{ width: `${item.maxMarks > 0 ? (item.marks / item.maxMarks) * 100 : 0}%` }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         ))
