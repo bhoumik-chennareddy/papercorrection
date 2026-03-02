@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, XCircle, AlertCircle, FileText, Percent, Award, BookOpen, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, Cell } from "recharts";
 
 interface RubricCriterion {
     criterion: string;
@@ -26,8 +26,8 @@ interface QuestionResult {
 
 interface StudentSubmission {
     id: string;
-    subjectId: string;
-    studentName: string;
+    classId: string;
+    studentId: string;
     fileName: string;
     fileData: string; // base64
     uploadedAt: string;
@@ -39,17 +39,25 @@ interface StudentSubmission {
     questionResults?: QuestionResult[];
 }
 
-interface Subject {
+interface Class {
     id: string;
+    subjectId: string;
     name: string;
-    color: string;
+}
+
+interface Student {
+    id: string;
+    classId: string;
+    name: string;
+    rollNo: string;
 }
 
 export default function SubmissionDetail() {
     const params = useParams();
     const router = useRouter();
     const [submission, setSubmission] = useState<StudentSubmission | null>(null);
-    const [subject, setSubject] = useState<Subject | null>(null);
+    const [classData, setClassData] = useState<Class | null>(null);
+    const [student, setStudent] = useState<Student | null>(null);
 
     useEffect(() => {
         if (params.id) {
@@ -60,12 +68,20 @@ export default function SubmissionDetail() {
                 if (found) {
                     setSubmission(found);
 
-                    // load subject
-                    const storedSubjects = localStorage.getItem("subjects");
-                    if (storedSubjects) {
-                        const subjects: Subject[] = JSON.parse(storedSubjects);
-                        const foundSubject = subjects.find(s => s.id === found.subjectId);
-                        if (foundSubject) setSubject(foundSubject);
+                    // load class
+                    const storedClasses = localStorage.getItem("classes");
+                    if (storedClasses) {
+                        const classes: Class[] = JSON.parse(storedClasses);
+                        const foundClass = classes.find(c => c.id === found.classId);
+                        if (foundClass) setClassData(foundClass);
+                    }
+
+                    // load student
+                    const storedStudents = localStorage.getItem("students");
+                    if (storedStudents) {
+                        const students: Student[] = JSON.parse(storedStudents);
+                        const foundStudent = students.find(s => s.id === found.studentId);
+                        if (foundStudent) setStudent(foundStudent);
                     }
                 }
             }
@@ -81,7 +97,6 @@ export default function SubmissionDetail() {
     }
 
     const {
-        studentName,
         fileName,
         fileData,
         uploadedAt,
@@ -98,13 +113,13 @@ export default function SubmissionDetail() {
         <div className="p-8 pb-20">
             {/* Top Navigation */}
             <div className="mb-6">
-                <button
-                    onClick={() => router.back()}
-                    className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors"
+                <Link
+                    href={`/classes/${submission.classId}`}
+                    className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors w-fit"
                 >
                     <ArrowLeft className="w-5 h-5" />
-                    <span>Back to Uploads</span>
-                </button>
+                    <span>Back to Class</span>
+                </Link>
             </div>
 
             {/* Header / Overview Card */}
@@ -114,14 +129,14 @@ export default function SubmissionDetail() {
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
                     <div>
                         <div className="flex items-center gap-3 mb-2">
-                            <h1 className="text-3xl font-bold text-white">{studentName}</h1>
-                            {subject && (
-                                <span
-                                    className="px-3 py-1 text-xs font-bold text-white rounded-full bg-opacity-20 border border-opacity-30"
-                                    style={{ backgroundColor: `${subject.color}20`, borderColor: subject.color, color: subject.color }}
-                                >
-                                    {subject.name}
+                            <h1 className="text-3xl font-bold text-white">{student?.name || "Unknown Student"}</h1>
+                            {classData && (
+                                <span className="px-3 py-1 text-xs font-bold text-purple-400 rounded-full bg-purple-400/10 border border-purple-400/20">
+                                    {classData.name}
                                 </span>
+                            )}
+                            {student?.rollNo && (
+                                <span className="text-zinc-500 font-mono text-sm ml-2">Roll: {student.rollNo}</span>
                             )}
                         </div>
                         <p className="text-zinc-400 flex items-center gap-2">
@@ -140,7 +155,7 @@ export default function SubmissionDetail() {
                         <div className="w-px h-12 bg-zinc-700" />
                         <div className="flex flex-col">
                             <span className="text-sm font-medium text-zinc-400 mb-1 flex items-center gap-1"><Percent className="w-4 h-4" /> Score</span>
-                            <span className={`text-2xl font-bold tracking-tight ${percentage! >= 80 ? 'text-emerald-400' : percentage! >= 50 ? 'text-amber-400' : 'text-red-400'}`}>
+                            <span className={`text-2xl font-bold tracking-tight ${percentage !== undefined && percentage >= 80 ? 'text-emerald-400' : percentage !== undefined && percentage >= 50 ? 'text-amber-400' : 'text-red-400'}`}>
                                 {percentage !== undefined ? `${percentage}%` : "--"}
                             </span>
                         </div>
@@ -170,22 +185,32 @@ export default function SubmissionDetail() {
                         </h3>
                         <div className="h-64 w-full bg-zinc-950/50 rounded-xl p-4 border border-zinc-800">
                             <ResponsiveContainer width="100%" height="100%">
-                                <RadarChart cx="50%" cy="50%" outerRadius="80%" data={
-                                    questionResults.map(qr => ({
+                                <BarChart
+                                    data={questionResults.map(qr => ({
                                         subject: `Q${qr.questionNumber}`,
                                         score: qr.maxMarks > 0 ? Math.round((qr.marksObtained / qr.maxMarks) * 100) : 0,
-                                        fullMark: 100,
-                                    }))
-                                }>
-                                    <PolarGrid stroke="#3f3f46" />
-                                    <PolarAngleAxis dataKey="subject" tick={{ fill: '#a1a1aa', fontSize: 12, fontWeight: 'bold' }} />
-                                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} />
-                                    <Radar name="Score %" dataKey="score" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.4} />
+                                    }))}
+                                    margin={{ top: 20, right: 30, left: 0, bottom: 5 }}
+                                >
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" vertical={false} />
+                                    <XAxis dataKey="subject" stroke="#a1a1aa" tick={{ fill: '#a1a1aa', fontSize: 12, fontWeight: 'bold' }} tickLine={false} axisLine={false} />
+                                    <YAxis domain={[0, 100]} stroke="#a1a1aa" tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={(val) => `${val}%`} tickLine={false} axisLine={false} />
                                     <RechartsTooltip
                                         contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', color: '#f4f4f5', borderRadius: '8px' }}
                                         itemStyle={{ color: '#c084fc', fontWeight: 'bold' }}
+                                        cursor={{ fill: '#27272a', opacity: 0.4 }}
+                                        formatter={(value: any) => [`${value}%`, 'Score']}
                                     />
-                                </RadarChart>
+                                    <Bar dataKey="score" radius={[4, 4, 0, 0]}>
+                                        {
+                                            questionResults.map((qr, index) => {
+                                                const score = qr.maxMarks > 0 ? (qr.marksObtained / qr.maxMarks) * 100 : 0;
+                                                const color = score === 100 ? '#10b981' : score >= 50 ? '#f59e0b' : '#ef4444';
+                                                return <Cell key={`cell-${index}`} fill={color} />;
+                                            })
+                                        }
+                                    </Bar>
+                                </BarChart>
                             </ResponsiveContainer>
                         </div>
                     </div>

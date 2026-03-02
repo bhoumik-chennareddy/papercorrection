@@ -8,8 +8,6 @@ export default function Sidebar() {
     const navItems = [
         { name: "Dashboard", href: "/", icon: Home },
         { name: "Subjects", href: "/subjects", icon: BookOpen },
-        { name: "Answer Keys", href: "/answer-keys", icon: Key },
-        { name: "Upload Papers", href: "/uploads", icon: Upload },
         { name: "Grade Papers", href: "/grade", icon: FileText },
         { name: "Reports", href: "/reports", icon: BarChart3 },
     ];

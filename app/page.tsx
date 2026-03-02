@@ -69,7 +69,7 @@ export default function Dashboard() {
       {/* Quick Actions */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 mb-8">
         <h2 className="text-xl font-bold text-white mb-4">Quick Actions</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Link
             href="/subjects"
             className="flex items-center gap-3 p-4 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-all border border-zinc-700 hover:border-purple-500/50"
@@ -78,18 +78,11 @@ export default function Dashboard() {
             <span className="text-white font-medium">Create New Subject</span>
           </Link>
           <Link
-            href="/grade"
-            className="flex items-center gap-3 p-4 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-all border border-zinc-700 hover:border-blue-500/50"
-          >
-            <FileCheck className="w-5 h-5 text-blue-500" />
-            <span className="text-white font-medium">Grade Papers</span>
-          </Link>
-          <Link
-            href="/answer-keys"
+            href="/subjects"
             className="flex items-center gap-3 p-4 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-all border border-zinc-700 hover:border-emerald-500/50"
           >
             <BookOpen className="w-5 h-5 text-emerald-500" />
-            <span className="text-white font-medium">Manage Answer Keys</span>
+            <span className="text-white font-medium">Manage Classes</span>
           </Link>
         </div>
       </div>
