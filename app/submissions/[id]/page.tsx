@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, CheckCircle2, XCircle, AlertCircle, FileText, Percent, Award, BookOpen, MessageSquare } from "lucide-react";
+import { ArrowLeft, CheckCircle2, XCircle, AlertCircle, FileText, Percent, Award, BookOpen, MessageSquare, HandHeart, Check } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, Cell } from "recharts";
+import { useAuth } from "../../context/AuthContext";
 
 interface RubricCriterion {
     criterion: string;
@@ -22,6 +23,8 @@ interface QuestionResult {
     referenceAnswer: string;
     feedback?: string;
     rubricBreakdown?: RubricCriterion[];
+    reEvaluationStatus?: 'requested' | 'resolved';
+    reEvaluationReason?: string;
 }
 
 interface StudentSubmission {
@@ -55,17 +58,31 @@ interface Student {
 export default function SubmissionDetail() {
     const params = useParams();
     const router = useRouter();
+    const { user } = useAuth();
     const [submission, setSubmission] = useState<StudentSubmission | null>(null);
     const [classData, setClassData] = useState<Class | null>(null);
     const [student, setStudent] = useState<Student | null>(null);
 
+    // Re-evaluation Form State (Student)
+    const [requestQuestionNo, setRequestQuestionNo] = useState<string | null>(null);
+    const [reason, setReason] = useState("");
+
+    // Resolve Form State (Teacher)
+    const [resolveQuestionNo, setResolveQuestionNo] = useState<string | null>(null);
+    const [newMarks, setNewMarks] = useState<number>(0);
+
     useEffect(() => {
-        if (params.id) {
+        if (params.id && user) {
             const storedSubmissions = localStorage.getItem("studentSubmissions");
             if (storedSubmissions) {
                 const submissions: StudentSubmission[] = JSON.parse(storedSubmissions);
                 const found = submissions.find((s) => s.id === params.id);
                 if (found) {
+                    if (user.role === "student" && found.studentId !== user.id) {
+                        router.push("/student/dashboard");
+                        return;
+                    }
+
                     setSubmission(found);
 
                     // load class
@@ -86,7 +103,65 @@ export default function SubmissionDetail() {
                 }
             }
         }
-    }, [params.id]);
+    }, [params.id, user, router]);
+
+    const handleRequestReevaluation = (questionNumber: string) => {
+        if (!submission || !user) return;
+
+        const storedSubmissions = localStorage.getItem("studentSubmissions");
+        if (storedSubmissions) {
+            const allSubmissions: StudentSubmission[] = JSON.parse(storedSubmissions);
+            const index = allSubmissions.findIndex(s => s.id === submission.id);
+            if (index !== -1 && allSubmissions[index].questionResults) {
+                const qIndex = allSubmissions[index].questionResults!.findIndex(q => q.questionNumber === questionNumber);
+                if (qIndex !== -1) {
+                    allSubmissions[index].questionResults![qIndex].reEvaluationStatus = 'requested';
+                    allSubmissions[index].questionResults![qIndex].reEvaluationReason = reason;
+
+                    localStorage.setItem("studentSubmissions", JSON.stringify(allSubmissions));
+                    setSubmission(allSubmissions[index]);
+                    setRequestQuestionNo(null);
+                    setReason("");
+                    alert("Re-evaluation request submitted!");
+                }
+            }
+        }
+    };
+
+    const handleResolveReevaluation = (questionNumber: string, maxMarks: number) => {
+        if (!submission || !user || user.role !== "teacher") return;
+
+        let adjustedMarks = newMarks;
+        if (adjustedMarks < 0) adjustedMarks = 0;
+        if (adjustedMarks > maxMarks) adjustedMarks = maxMarks;
+
+        const storedSubmissions = localStorage.getItem("studentSubmissions");
+        if (storedSubmissions) {
+            const allSubmissions: StudentSubmission[] = JSON.parse(storedSubmissions);
+            const index = allSubmissions.findIndex(s => s.id === submission.id);
+
+            if (index !== -1 && allSubmissions[index].questionResults) {
+                const qIndex = allSubmissions[index].questionResults!.findIndex(q => q.questionNumber === questionNumber);
+                if (qIndex !== -1) {
+                    allSubmissions[index].questionResults![qIndex].marksObtained = adjustedMarks;
+                    allSubmissions[index].questionResults![qIndex].reEvaluationStatus = 'resolved';
+
+                    // Update total marks and percentage
+                    const totalMarks = allSubmissions[index].questionResults!.reduce((sum, q) => sum + (Number(q.marksObtained) || 0), 0);
+                    const totalMaxMarks = allSubmissions[index].maxMarks || 1;
+                    const percentage = Math.round((totalMarks / totalMaxMarks) * 100);
+
+                    allSubmissions[index].totalMarks = totalMarks;
+                    allSubmissions[index].percentage = percentage;
+
+                    localStorage.setItem("studentSubmissions", JSON.stringify(allSubmissions));
+                    setSubmission(allSubmissions[index]);
+                    setResolveQuestionNo(null);
+                    alert("Marks updated successfully!");
+                }
+            }
+        }
+    };
 
     if (!submission) {
         return (
@@ -114,11 +189,11 @@ export default function SubmissionDetail() {
             {/* Top Navigation */}
             <div className="mb-6">
                 <Link
-                    href={`/classes/${submission.classId}`}
+                    href={user?.role === "teacher" ? `/classes/${submission.classId}` : "/student/dashboard"}
                     className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors w-fit"
                 >
                     <ArrowLeft className="w-5 h-5" />
-                    <span>Back to Class</span>
+                    <span>Back to {user?.role === "teacher" ? "Class" : "Dashboard"}</span>
                 </Link>
             </div>
 
@@ -279,25 +354,101 @@ export default function SubmissionDetail() {
                                         </div>
                                     </div>
 
-                                    {qr.rubricBreakdown && qr.rubricBreakdown.length > 0 && (
-                                        <div className="mt-4 pt-4 border-t border-zinc-800/80">
-                                            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider block mb-3">Rubric Breakdown</span>
-                                            <div className="space-y-3">
-                                                {qr.rubricBreakdown.map((item, i) => (
-                                                    <div key={i} className="flex flex-col gap-1">
-                                                        <div className="flex justify-between text-sm">
-                                                            <span className="text-zinc-300">{item.criterion}</span>
-                                                            <span className="text-zinc-400 font-medium">{item.marks} / {item.maxMarks}</span>
-                                                        </div>
-                                                        <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
-                                                            <div
-                                                                className={`h-full rounded-full transition-all duration-500 ${item.marks === item.maxMarks ? 'bg-emerald-500' : item.marks > 0 ? 'bg-amber-500' : 'bg-red-500'}`}
-                                                                style={{ width: `${item.maxMarks > 0 ? (item.marks / item.maxMarks) * 100 : 0}%` }}
-                                                            />
+                                    {/* Re-evaluation Teacher Alert */}
+                                    {user?.role === "teacher" && qr.reEvaluationStatus === "requested" && (
+                                        <div className="mt-4 p-4 border border-amber-500/40 bg-amber-500/10 rounded-lg">
+                                            <div className="flex items-center gap-2 text-amber-500 font-bold mb-2">
+                                                <HandHeart className="w-5 h-5" /> RE-EVALUATION REQUESTED
+                                            </div>
+                                            <p className="text-zinc-300 text-sm italic mb-4">"{qr.reEvaluationReason}"</p>
+
+                                            {resolveQuestionNo !== qr.questionNumber ? (
+                                                <button
+                                                    onClick={() => {
+                                                        setResolveQuestionNo(qr.questionNumber);
+                                                        setNewMarks(qr.marksObtained);
+                                                    }}
+                                                    className="w-full sm:w-auto px-4 py-2 bg-amber-500 text-amber-950 font-bold rounded shadow hover:bg-amber-400 transition"
+                                                >
+                                                    Update Evaluation
+                                                </button>
+                                            ) : (
+                                                <div className="flex items-center gap-3 bg-zinc-950/50 p-3 rounded border border-zinc-800">
+                                                    <div>
+                                                        <label className="text-xs text-zinc-500 block mb-1">New Marks</label>
+                                                        <input
+                                                            type="number"
+                                                            value={newMarks}
+                                                            onChange={(e) => setNewMarks(Number(e.target.value))}
+                                                            className="w-24 px-3 py-1.5 bg-zinc-800 text-white border border-zinc-700 rounded focus:border-amber-500 focus:outline-none"
+                                                            max={qr.maxMarks}
+                                                            min={0}
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        onClick={() => handleResolveReevaluation(qr.questionNumber, qr.maxMarks)}
+                                                        className="mt-5 px-4 py-1.5 bg-emerald-600 text-white font-medium rounded hover:bg-emerald-500 transition shadow"
+                                                    >
+                                                        Save
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setResolveQuestionNo(null)}
+                                                        className="mt-5 px-4 py-1.5 text-zinc-400 hover:text-white transition"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Re-evaluation Student Controls */}
+                                    {user?.role === "student" && (
+                                        <div className="mt-4 border-t border-zinc-800/80 pt-4">
+                                            {!qr.reEvaluationStatus ? (
+                                                requestQuestionNo === qr.questionNumber ? (
+                                                    <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800">
+                                                        <label className="text-sm font-medium text-zinc-300 block mb-2">What went wrong in the evaluation?</label>
+                                                        <textarea
+                                                            className="w-full bg-zinc-800 border-zinc-700 text-white p-3 rounded-lg mb-3 focus:outline-none focus:border-purple-500"
+                                                            rows={3}
+                                                            placeholder="e.g., I used a different formula but the final answer is correct..."
+                                                            value={reason}
+                                                            onChange={(e) => setReason(e.target.value)}
+                                                        />
+                                                        <div className="flex gap-2">
+                                                            <button
+                                                                onClick={() => handleRequestReevaluation(qr.questionNumber)}
+                                                                disabled={!reason.trim()}
+                                                                className="px-4 py-2 bg-purple-600 text-white font-medium rounded-lg disabled:opacity-50 hover:bg-purple-500 transition"
+                                                            >
+                                                                Submit Request
+                                                            </button>
+                                                            <button
+                                                                onClick={() => { setRequestQuestionNo(null); setReason(""); }}
+                                                                className="px-4 py-2 text-zinc-400 hover:text-white transition"
+                                                            >
+                                                                Cancel
+                                                            </button>
                                                         </div>
                                                     </div>
-                                                ))}
-                                            </div>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => setRequestQuestionNo(qr.questionNumber)}
+                                                        className="text-sm text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1 transition-colors"
+                                                    >
+                                                        <HandHeart className="w-4 h-4" /> Request Re-evaluation
+                                                    </button>
+                                                )
+                                            ) : qr.reEvaluationStatus === 'requested' ? (
+                                                <div className="text-sm text-amber-400 font-medium flex items-center gap-1 bg-amber-400/10 px-3 py-2 rounded-lg border border-amber-400/20 w-fit">
+                                                    <AlertCircle className="w-4 h-4" /> Re-evaluation Requested. Waiting for teacher...
+                                                </div>
+                                            ) : (
+                                                <div className="text-sm text-emerald-400 font-medium flex items-center gap-1 bg-emerald-400/10 px-3 py-2 rounded-lg border border-emerald-400/20 w-fit">
+                                                    <Check className="w-4 h-4" /> Re-evaluation Resolved
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>

@@ -1,15 +1,35 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, BookOpen, FileText, Key, BarChart3, GraduationCap, Upload } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Home, BookOpen, FileText, BarChart3, GraduationCap, AlertCircle, Upload } from "lucide-react";
 
 export default function Sidebar() {
     const pathname = usePathname();
+    const [pendingCount, setPendingCount] = useState(0);
+
+    // Re-check pending requests when pathname changes (simulating real-time local updates)
+    useEffect(() => {
+        const storedSubmissions = localStorage.getItem("studentSubmissions");
+        if (storedSubmissions) {
+            const submissions = JSON.parse(storedSubmissions);
+            let count = 0;
+            submissions.forEach((sub: any) => {
+                if (sub.questionResults) {
+                    const pending = sub.questionResults.filter((qr: any) => qr.reEvaluationStatus === 'requested').length;
+                    count += pending;
+                }
+            });
+            setPendingCount(count);
+        }
+    }, [pathname]);
 
     const navItems = [
         { name: "Dashboard", href: "/", icon: Home },
         { name: "Subjects", href: "/subjects", icon: BookOpen },
         { name: "Grade Papers", href: "/grade", icon: FileText },
+        { name: "Bulk Upload", href: "/uploads", icon: Upload },
         { name: "Reports", href: "/reports", icon: BarChart3 },
+        { name: "Re-evaluations", href: "/reevaluations", icon: AlertCircle, badge: pendingCount },
     ];
 
     const isActive = (href: string) => {
@@ -27,7 +47,7 @@ export default function Sidebar() {
                     </div>
                     <div>
                         <h1 className="text-white font-bold text-lg">AI Grader</h1>
-                        <p className="text-zinc-500 text-xs">Smart Exam System</p>
+                        <p className="text-zinc-500 text-xs">Teacher Portal</p>
                     </div>
                 </div>
             </div>
@@ -42,13 +62,20 @@ export default function Sidebar() {
                         <Link
                             key={item.href}
                             href={item.href}
-                            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${active
+                            className={`flex items-center justify-between px-4 py-3 rounded-lg transition-all duration-200 ${active
                                 ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg shadow-purple-500/30"
                                 : "text-zinc-400 hover:bg-zinc-800 hover:text-white"
                                 }`}
                         >
-                            <Icon className="w-5 h-5" />
-                            <span className="font-medium">{item.name}</span>
+                            <div className="flex items-center gap-3">
+                                <Icon className="w-5 h-5" />
+                                <span className="font-medium">{item.name}</span>
+                            </div>
+                            {item.badge !== undefined && item.badge > 0 && (
+                                <div className={`px-2 py-0.5 text-xs font-bold rounded-full ${active ? 'bg-white text-purple-600' : 'bg-amber-500 text-white'}`}>
+                                    {item.badge}
+                                </div>
+                            )}
                         </Link>
                     );
                 })}
